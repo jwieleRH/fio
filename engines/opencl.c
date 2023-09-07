@@ -27,26 +27,30 @@ struct opencl_options {
 	cl_command_queue command_queue;
 };
 
+static struct fio_option options[] = {
+
+};
+
 static pthread_mutex_t running_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static unsigned int running = 0;
 
-static int init_devices(struct thread_data *td);
+static int init_devices(struct thread_data *td)
 {
 	struct opencl_options *o = td->eo;
-	cl_uint result;
+	cl_int result;
 
 	/* Get the first platform. */
 	result = clGetPlatformIDs(1, &o->platform_id, NULL);
 	if (result != CL_SUCCESS) {
-		log_err("No platform found: %d", result)
+		log_err("No platform found: %d", result);
 			return 1;
 	}
 
 	/* Get the first device of the default type on the platform. */
 	result = clGetDeviceIDs(o->platform_id, CL_DEVICE_TYPE_DEFAULT, 1,  &o->device_id, NULL);
 	if (result != CL_SUCCESS) {
-		log_err("No device found: %d", result)
+		log_err("No device found: %d", result);
 			return 1;
 	}
 
@@ -54,14 +58,7 @@ static int init_devices(struct thread_data *td);
 	/* TODO: add a callback for error reporting. */
 	o->context = clCreateContext( NULL, 1, &o->device_id, NULL, NULL, &result);
 	if (result != CL_SUCCESS) {
-		log_err("CreateContext failed: %d", result)
-			return 1;
-	}
-
-	/* Create a memory buffer on the device. */
-	o->buffer = clCreateBuffer(o->context, CL_MEM_READ_WRITE, BUFFER_SIZE, NULL, &result);
-	if (result != CL_SUCCESS) {
-		log_err("CreateBuffer failed: %d", result)
+		log_err("CreateContext failed: %d", result);
 			return 1;
 	}
 
@@ -69,41 +66,76 @@ static int init_devices(struct thread_data *td);
 	o->command_queue =
 		clCreateCommandQueueWithProperties(o->context, o->device_id, NULL, &result);
 	if (result != CL_SUCCESS) {
-		log_err("CreateCommandQueueWithProperties failed: %d", result)
-			return 1;
-	}
-	result = clEnqueueWriteBuffer(o->command_queue, o->buffer, CL_TRUE, 0,
-				      sizeof(buffer), buffer, 0, NULL, NULL);
-	if (result != CL_SUCCESS) {
-		log_err("CreateCommandQueueWithProperties failed: %d", result)
+		log_err("CreateCommandQueueWithProperties failed: %d", result);
 			return 1;
 	}
 	return 0;
 }
 
-static int fio_opencl_init(struct thread_data *td))
+static enum fio_q_status fio_opencl_queue(struct thread_data *td,
+					  struct io_u *io_u)
+{						\
+	struct opencl_options *o = td->eo;
+	cl_int result;
+	
+	result = clEnqueueWriteBuffer(o->command_queue, o->buffer, CL_TRUE, 0,
+				      sizeof(buffer), buffer, 0, NULL, NULL);
+	if (result != CL_SUCCESS) {
+		log_err("CreateCommandQueueWithProperties failed: %d", result);
+			return 1;
+	}
+	return FIO_Q_COMPLETED;
+}
+
+static int fio_opencl_init(struct thread_data *td)
  {
 	 pthread_mutex_lock(&running_lock);
 	 if (!running) {
-		 int result = init_devices();
+		 int result = init_devices(td);
 		 if (!result) {
 			 pthread_mutex_unlock(&running_lock);
-			 return result;
+			 return 1;
 		 }
 	 }
 	 running++;
 	 pthread_mutex_unlock(&running_lock);
-	 return result;
+	 return 0;
  }
+
+static int fio_opencl_iomem_alloc(struct thread_data *td, size_t total_mem)
+{
+	struct opencl_options *o = td->eo;
+	int result;
+
+	/* Create a memory buffer on the device. */
+	o->buffer = clCreateBuffer(o->context, CL_MEM_READ_WRITE, total_mem, NULL, &result);
+	if (result != CL_SUCCESS) {
+		log_err("CreateBuffer failed: %d", result);
+			return 1;
+	}
+	return 0;
+}
+
+static void fio_opencl_iomem_free(struct thread_data *td)
+{
+	struct opencl_options *o = td->eo;
+	int result;
+
+	result = clReleaseMemObject(o->buffer);
+		 
+	if (result != CL_SUCCESS) {
+		log_err("ReleaseMemObject failed: %d", result);
+	}
+}
 
 static void fio_opencl_cleanup(struct thread_data *td)
 {
-	pthead_mutex_lock(&running_lock);
+	pthread_mutex_lock(&running_lock);
 	running--;
 	if (!running) {
 		/* Tear down */
 	}
-	pthead_mutex_lock(&running_unlock);
+	pthread_mutex_unlock(&running_lock);
 }
 
 FIO_STATIC struct ioengine_ops ioengine = {
@@ -112,8 +144,8 @@ FIO_STATIC struct ioengine_ops ioengine = {
 	.init                = fio_opencl_init,
 	.queue               = fio_opencl_queue,
 	.get_file_size       = generic_get_file_size,
-	.open_file           = fio_opencl_open_file,
-	.close_file          = fio_opencl_close_file,
+	.open_file           = generic_open_file,
+	.close_file          = generic_close_file,
 	.iomem_alloc         = fio_opencl_iomem_alloc,
 	.iomem_free          = fio_opencl_iomem_free,
 	.cleanup             = fio_opencl_cleanup,

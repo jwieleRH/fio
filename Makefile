@@ -146,6 +146,9 @@ endif
 ifdef CONFIG_LINUX_SPLICE
   SOURCE += engines/splice.c
 endif
+ifdef CONFIG_OPENCL
+  SOURCE += engines/opencl.c
+endif
 ifdef CONFIG_SOLARISAIO
   SOURCE += engines/solarisaio.c
 endif

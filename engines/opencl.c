@@ -92,7 +92,7 @@ static int fio_opencl_init(struct thread_data *td)
 	 pthread_mutex_lock(&running_lock);
 	 if (!running) {
 		 int result = init_devices(td);
-		 if (!result) {
+		 if (result) {
 			 pthread_mutex_unlock(&running_lock);
 			 return 1;
 		 }

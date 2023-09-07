@@ -142,6 +142,8 @@ ifdef CONFIG_LINUX_EXT4_MOVE_EXTENT
 endif
 ifdef CONFIG_LIBCUFILE
   SOURCE += engines/libcufile.c
+  FIO_CFLAGS += -I/usr/local/cuda/include
+  FIO_LDFLAGS += -L/usr/local/cuda/lib64
 endif
 ifdef CONFIG_LINUX_SPLICE
   SOURCE += engines/splice.c

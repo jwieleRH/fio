@@ -1,0 +1,34 @@
+# Example OpenCL job
+#
+# Required environment variables:
+#     FIO_DIR     : 'directory'. This job uses cuda_io=cufile, so path(s) must
+#                   point to GPUDirect Storage filesystem(s)
+#
+
+[global]
+ioengine=OpenCL
+directory=${FIO_DIR}
+size=4096
+numjobs=1
+thread
+memtype=device
+
+[read]
+rw=read
+
+[write]
+rw=write
+
+[randread]
+rw=randread
+
+[randwrite]
+rw=randwrite
+
+[verify]
+rw=write
+verify=md5
+
+[randverify]
+rw=randwrite
+verify=md5

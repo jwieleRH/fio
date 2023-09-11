@@ -13,6 +13,7 @@
 #include <stdbool.h>
 
 #include "../fio.h"
+#include "../optgroup.h"
 
 #define BUFFER_SIZE (1024 * 1024)
 
@@ -26,6 +27,8 @@ enum memtype {
 
 struct opencl_options {
 	struct thread_data *td;
+	int platform;
+	int device;
 	cl_context context;
 	cl_mem buffer;
 	cl_command_queue command_queue;
@@ -40,6 +43,7 @@ static struct fio_option options[] = {
 		.type  = FIO_OPT_STR,
 		.off1  = offsetof(struct opencl_options, memtype),
 		.def   = "host",
+		.category = FIO_OPT_C_ENGINE,
 		.posval = {
 			{
 				.ival = "host",
@@ -54,6 +58,24 @@ static struct fio_option options[] = {
 		},
 	},
 	{
+		.name    = "platform",
+		.lname   = "platform number",
+		.type    = FIO_OPT_INT,
+		.off1    = offsetof(struct opencl_options, platform),
+		.help    = "Platform number, default 0. See clinfo(1).",
+		.def     = 0,
+		.category = FIO_OPT_C_ENGINE,
+	},
+	{
+		.name    = "device",
+		.lname   = "device number",
+		.type    = FIO_OPT_INT,
+		.off1    = offsetof(struct opencl_options, device),
+		.help    = "Device number on the platform, default 0",
+		.def     = 0,
+		.category = FIO_OPT_C_ENGINE,
+	},
+	{
 		.name	 = NULL,
 	},
 };
@@ -65,25 +87,118 @@ static unsigned int running = 0;
 static cl_platform_id platform_id;
 static cl_device_id device_id;
 
-
-static int init_devices(struct thread_data *td)
+static cl_int print_platform_info(cl_platform_id platform_id)
 {
+	static char platform_name[128]; /* Is there a known max size? */
+	cl_platform_info param_name;
+	size_t param_value_size;
+	void *param_value;
+	size_t param_value_size_ret;
 	cl_int result;
 
-	/* Get the first platform. */
-	result = clGetPlatformIDs(1, &platform_id, NULL);
+	param_name = CL_PLATFORM_NAME;
+	param_value_size = sizeof(platform_name);
+	param_value = platform_name;
+
+	result = clGetPlatformInfo(platform_id, param_name, param_value_size, param_value,
+				   &param_value_size_ret);
+				   
 	if (result != CL_SUCCESS) {
-		log_err("No platform found: %d", result);
+		log_err("getPlatformInfo failed: %d\n", result);
+		return 1;
+	}
+	log_info("  Platform name: %s\n", platform_name);
+	return 0;
+}
+
+static cl_int print_device_info(cl_device_id device_id)
+{
+	static char device_name[128];
+	cl_device_info param_name;
+	size_t param_value_size;
+	void *param_value;
+	size_t param_value_size_ret;
+	cl_int result;
+
+	param_name = CL_DEVICE_NAME;
+	param_value_size = sizeof(device_name);
+	param_value = device_name;
+	
+	result = clGetDeviceInfo(device_id, param_name, param_value_size, param_value,
+				 &param_value_size_ret);
+	if (result != CL_SUCCESS) {
+		return 1;
+	}
+	log_info("  Device Name:%s\n", device_name);
+	return 0;
+}
+
+static int init_devices(struct thread_data *td){
+	struct opencl_options *o = td->eo;
+	cl_platform_id *platforms;
+	cl_uint num_platforms;
+	cl_device_id *devices;
+	cl_uint num_devices;
+	cl_int result;
+	unsigned int i;
+
+	/* Get the count of available platforms. */
+	result = clGetPlatformIDs(0, NULL, &num_platforms);
+	if (result != CL_SUCCESS) {
+		log_err("No platforms found: %d\n", result);
 			return 1;
 	}
 
-	/* Get the first device of the default type on the platform. */
-	result = clGetDeviceIDs(platform_id, CL_DEVICE_TYPE_DEFAULT, 1,  &device_id, NULL);
-	if (result != CL_SUCCESS) {
-		log_err("No device found: %d", result);
-			return 1;
+	platforms = malloc(num_platforms * sizeof(cl_platform_id));
+	if (!platforms) {
+		log_err("Platform memory allocation failed.\n");
+		return 1;
 	}
 
+	/* Assume num_platforms doesn't change on the fly. */
+	result = clGetPlatformIDs(num_platforms, platforms, NULL);
+	if (result != CL_SUCCESS) {
+		log_err("No platforms found: %d\n", result);
+		return 1;
+	}
+
+	for (i = 0; i < num_platforms; i++) {
+		log_info("Platform %u of %u:\n", i + 1, num_platforms);
+		if (print_platform_info(platforms[i]) != CL_SUCCESS) {
+			free(platforms);
+			return 1;
+		}
+	}
+	if (o->platform >= num_platforms) {
+		log_err("Specified platform %u not found\n", o->platform);
+		free(platforms);
+		return 1;
+	}
+
+	platform_id = platforms[o->platform];
+	free(platforms);
+
+	result = clGetDeviceIDs(platform_id, CL_DEVICE_TYPE_ALL, 0, NULL, &num_devices);
+	if (result != CL_SUCCESS || !num_devices) {
+		log_err("No device found: %d\n", result);
+		return 1;
+	}
+	devices = malloc(num_devices * sizeof(cl_device_id));
+	result = clGetDeviceIDs(platform_id, CL_DEVICE_TYPE_ALL, num_devices,  devices, NULL);
+	if (result != CL_SUCCESS) {
+		log_err("No device found: %d\n", result);
+		return 1;
+	}
+	if (o->device >= num_devices) {
+		log_err("Specified device %u not found\n", o->device);
+		free(devices);
+		return 1;
+	}
+	device_id = devices[o->device];
+	free(devices);
+	if (print_device_info(device_id)) {
+		return 1;
+	}
 	return 0;
 }
 
@@ -98,7 +213,7 @@ static enum fio_q_status fio_opencl_queue(struct thread_data *td,
 		o->command_queue =
 			clCreateCommandQueueWithProperties(o->context, device_id, NULL, &result);
 		if (result != CL_SUCCESS) {
-			log_err("CreateCommandQueueWithProperties failed: %d", result);
+			log_err("CreateCommandQueueWithProperties failed: %d\n", result);
 			return 1;
 		}
 	}
@@ -106,7 +221,7 @@ static enum fio_q_status fio_opencl_queue(struct thread_data *td,
 	result = clEnqueueWriteBuffer(o->command_queue, o->buffer, CL_TRUE, 0,
 				      io_u->buflen, buffer, 0, NULL, NULL);
 	if (result != CL_SUCCESS) {
-		log_err("CreateCommandQueueWithProperties failed: %d", result);
+		log_err("CreateCommandQueueWithProperties failed: %d\n", result);
 			return 1;
 	}
 	return FIO_Q_COMPLETED;
@@ -145,7 +260,7 @@ static int fio_opencl_iomem_alloc(struct thread_data *td, size_t total_mem)
 		flags = CL_MEM_USE_HOST_PTR;
 		o->host_buffer = calloc(1, total_mem);
 		if (!o->host_buffer) {
-			log_err("Host buffer allocation failed");
+			log_err("Host buffer allocation failed\n");
 			return 1;
 		}
 	} else {
@@ -159,14 +274,14 @@ static int fio_opencl_iomem_alloc(struct thread_data *td, size_t total_mem)
 	if (!o->context) {
 		o->context = clCreateContext( NULL, 1, &device_id, NULL, NULL, &result);
 		if (result != CL_SUCCESS) {
-			log_err("CreateContext failed: %d", result);
+			log_err("CreateContext failed: %d\n", result);
 			return 1;
 		}
 	}
 
 	o->buffer = clCreateBuffer(o->context, flags, total_mem, o->host_buffer, &result);
 	if (result != CL_SUCCESS) {
-		log_err("CreateBuffer failed: %d", result);
+		log_err("CreateBuffer failed: %d\n", result);
 		return 1;
 	}
 	return 0;
@@ -180,7 +295,7 @@ static void fio_opencl_iomem_free(struct thread_data *td)
 	result = clReleaseMemObject(o->buffer);
 		 
 	if (result != CL_SUCCESS) {
-		log_err("ReleaseMemObject failed: %d", result);
+		log_err("ReleaseMemObject failed: %d\n", result);
 	}
 }
 

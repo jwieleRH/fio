@@ -140,11 +140,10 @@ static int init_devices(struct thread_data *td){
 	cl_device_id *devices;
 	cl_uint num_devices;
 	cl_int result;
-	unsigned int i;
 
 	/* Get the count of available platforms. */
 	result = clGetPlatformIDs(0, NULL, &num_platforms);
-	if (result != CL_SUCCESS) {
+	if (result != CL_SUCCESS || !num_platforms) {
 		log_err("No platforms found: %d\n", result);
 			return 1;
 	}
@@ -159,15 +158,8 @@ static int init_devices(struct thread_data *td){
 	result = clGetPlatformIDs(num_platforms, platforms, NULL);
 	if (result != CL_SUCCESS) {
 		log_err("No platforms found: %d\n", result);
+		free(platforms);
 		return 1;
-	}
-
-	for (i = 0; i < num_platforms; i++) {
-		log_info("Platform %u of %u:\n", i + 1, num_platforms);
-		if (print_platform_info(platforms[i]) != CL_SUCCESS) {
-			free(platforms);
-			return 1;
-		}
 	}
 	if (o->platform >= num_platforms) {
 		log_err("Specified platform %u not found\n", o->platform);
@@ -177,6 +169,9 @@ static int init_devices(struct thread_data *td){
 
 	platform_id = platforms[o->platform];
 	free(platforms);
+	if (print_platform_info(platform_id) != CL_SUCCESS) {
+		return 1;
+	}
 
 	result = clGetDeviceIDs(platform_id, CL_DEVICE_TYPE_ALL, 0, NULL, &num_devices);
 	if (result != CL_SUCCESS || !num_devices) {
@@ -218,11 +213,26 @@ static enum fio_q_status fio_opencl_queue(struct thread_data *td,
 		}
 	}
 
-	result = clEnqueueWriteBuffer(o->command_queue, o->buffer, CL_TRUE, 0,
-				      io_u->buflen, buffer, 0, NULL, NULL);
-	if (result != CL_SUCCESS) {
-		log_err("CreateCommandQueueWithProperties failed: %d\n", result);
+	switch(io_u->ddir) {
+	case DDIR_READ:
+		result = clEnqueueReadBuffer(o->command_queue, o->buffer, CL_TRUE, 0,
+					     io_u->buflen, buffer, 0, NULL, NULL);
+		if (result != CL_SUCCESS) {
+			log_err("EnqueueRead failed: %d\n", result);
 			return 1;
+		}
+		break;
+	case DDIR_WRITE:
+		result = clEnqueueWriteBuffer(o->command_queue, o->buffer, CL_TRUE, 0,
+					      io_u->buflen, buffer, 0, NULL, NULL);
+		if (result != CL_SUCCESS) {
+			log_err("EnqueueWrite failed: %d\n", result);
+			return 1;
+		}
+		break;
+	default:
+		log_err("Unimplemented option\n");
+		break;
 	}
 	return FIO_Q_COMPLETED;
 }

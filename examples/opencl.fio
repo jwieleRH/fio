@@ -1,14 +1,17 @@
 # Example OpenCL job
 #
 # Required environment variables:
-#     FIO_DIR     : 'directory'. This job uses cuda_io=cufile, so path(s) must
-#                   point to GPUDirect Storage filesystem(s)
+#     FIO_DIR      : directory for local storage..
+#     FIO_PLATFORM : The platform number (see clinfo(1)).
+#     FIO_DEVICE   : The device number on the platform.
 #
 
 [global]
 ioengine=OpenCL
 directory=${FIO_DIR}
-size=4096
+platform=${FIO_PLATFORM}
+device=${FIO_DEVICE}
+size=1m
 numjobs=1
 thread
 

@@ -9,7 +9,7 @@
 ioengine=OpenCL
 directory=${FIO_DIR}
 size=4096
-numjobs=1
+numjobs=16
 thread
 memtype=device
 

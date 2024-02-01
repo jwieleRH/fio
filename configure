@@ -2823,9 +2823,10 @@ EOF
   if compile_prog "" "/usr/lib64/libOpenCL.so.1"; then
     opencl="yes"
     LIBS="/usr/lib64/libOpenCL.so.1 $LIBS"
-    if test "$opencl_version" != "" ; then
-      CFLAGS+=-DCL_TARGET_OPENCL_VERSION="$opencl_version"
-    fi	
+    if test -z "$opencl_version" ; then
+      opencl_version="300"
+    fi
+    CFLAGS+=-DCL_TARGET_OPENCL_VERSION="$opencl_version"
   else
     if test "$opencl" = "yes" ; then
       feature_not_found "opencl" ""

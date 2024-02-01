@@ -468,10 +468,12 @@ static struct io_u *fio_ioring_cmd_event(struct thread_data *td, int event)
 	cqe = &ld->cq_ring.cqes[index];
 	io_u = (struct io_u *) (uintptr_t) cqe->user_data;
 
-	if (cqe->res != 0)
+	if (cqe->res != 0) {
 		io_u->error = -cqe->res;
-	else
+		return io_u;
+	} else {
 		io_u->error = 0;
+	}
 
 	if (o->cmd_type == FIO_URING_CMD_NVME) {
 		data = FILE_ENG_DATA(io_u->file);
@@ -1279,14 +1281,21 @@ static int fio_ioring_cmd_open_file(struct thread_data *td, struct fio_file *f)
 		lba_size = data->lba_ext ? data->lba_ext : data->lba_size;
 
 		for_each_rw_ddir(ddir) {
-			if (td->o.min_bs[ddir] % lba_size ||
-				td->o.max_bs[ddir] % lba_size) {
-				if (data->lba_ext)
-					log_err("%s: block size must be a multiple of (LBA data size + Metadata size)\n",
-						f->file_name);
-				else
+			if (td->o.min_bs[ddir] % lba_size || td->o.max_bs[ddir] % lba_size) {
+				if (data->lba_ext) {
+					log_err("%s: block size must be a multiple of %u "
+						"(LBA data size + Metadata size)\n", f->file_name, lba_size);
+					if (td->o.min_bs[ddir] == td->o.max_bs[ddir] &&
+					    !(td->o.min_bs[ddir] % data->lba_size)) {
+						/* fixed block size is actually a multiple of LBA data size */
+						unsigned long long suggestion = lba_size *
+							(td->o.min_bs[ddir] / data->lba_size);
+						log_err("Did you mean to use a block size of %llu?\n", suggestion);
+					}
+				} else {
 					log_err("%s: block size must be a multiple of LBA data size\n",
 						f->file_name);
+				}
 				td_verror(td, EINVAL, "fio_ioring_cmd_open_file");
 				return 1;
 			}
